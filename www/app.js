@@ -5,6 +5,7 @@ const STORE_NAME = "entries";
 let db = null;
 let entries = [];
 let editingId = null;
+let resizeTimer = null;
 
 const els = {
     form: document.getElementById("entryForm"),
@@ -42,11 +43,57 @@ function toNumber(value) {
     return Number.isFinite(n) ? n : 0;
 }
 
+function toNullableWeight(value) {
+    if (value === "" || value === null || value === undefined) {
+        return null;
+    }
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+}
+
 function formatWeight(weight) {
     if (weight === null || weight === undefined || weight === "") {
         return "-";
     }
-    return `${Number(weight).toFixed(1)} kg`;
+    const n = Number(weight);
+    return Number.isFinite(n) ? `${n.toFixed(1)} kg` : "-";
+}
+
+function sanitizeEntry(raw, preferredId = null) {
+    if (!raw || typeof raw !== "object") {
+        return null;
+    }
+
+    const date = typeof raw.date === "string" ? raw.date.trim() : "";
+    if (!date) {
+        return null;
+    }
+
+    if (raw.pullups === undefined || raw.pullups === null || raw.pullups === "") {
+        return null;
+    }
+
+    const parsedPullups = Number(raw.pullups);
+    if (!Number.isFinite(parsedPullups) || parsedPullups < 0) {
+        return null;
+    }
+
+    let weightKg = null;
+    if (raw.weightKg !== undefined && raw.weightKg !== null && raw.weightKg !== "") {
+        const parsedWeight = Number(raw.weightKg);
+        if (!Number.isFinite(parsedWeight) || parsedWeight < 0) {
+            return null;
+        }
+        weightKg = parsedWeight;
+    }
+
+    return {
+        id: preferredId || raw.id || crypto.randomUUID(),
+        date,
+        pullups: Math.round(parsedPullups),
+        weightKg,
+        updatedAt: raw.updatedAt || new Date().toISOString()
+    };
 }
 
 function openDatabase() {
@@ -69,6 +116,10 @@ function openDatabase() {
 
         request.onerror = function () {
             reject(request.error);
+        };
+
+        request.onblocked = function () {
+            reject(new Error("Datenbank ist blockiert. Bitte andere offene Tabs schließen."));
         };
     });
 }
@@ -139,24 +190,28 @@ function getEntryByDate(date) {
 }
 
 async function requestPersistentStorage() {
-    if (!navigator.storage || !navigator.storage.persisted) {
-        els.storageState.textContent = "Speicherstatus: lokal gespeichert";
-        return;
-    }
+    try {
+        if (!navigator.storage || !navigator.storage.persisted) {
+            els.storageState.textContent = "Speicherstatus: lokal gespeichert";
+            return;
+        }
 
-    const alreadyPersistent = await navigator.storage.persisted();
+        const alreadyPersistent = await navigator.storage.persisted();
 
-    if (alreadyPersistent) {
-        els.storageState.textContent = "Speicherstatus: persistent";
-        return;
-    }
+        if (alreadyPersistent) {
+            els.storageState.textContent = "Speicherstatus: persistent";
+            return;
+        }
 
-    if (navigator.storage.persist) {
-        const granted = await navigator.storage.persist();
-        els.storageState.textContent = granted
-            ? "Speicherstatus: persistent"
-            : "Speicherstatus: lokal, aber nicht dauerhaft garantiert";
-    } else {
+        if (navigator.storage.persist) {
+            const granted = await navigator.storage.persist();
+            els.storageState.textContent = granted
+                ? "Speicherstatus: persistent"
+                : "Speicherstatus: lokal, aber nicht dauerhaft garantiert";
+        } else {
+            els.storageState.textContent = "Speicherstatus: lokal gespeichert";
+        }
+    } catch (error) {
         els.storageState.textContent = "Speicherstatus: lokal gespeichert";
     }
 }
@@ -179,9 +234,13 @@ function calculateWeeklyData(data) {
     const grouped = new Map();
 
     data.forEach(entry => {
+        if (!entry || !entry.date) {
+            return;
+        }
+
         const week = getISOWeek(entry.date);
-        const pullups = toNumber(entry.pullups);
-        const weight = entry.weightKg === null || entry.weightKg === "" ? null : Number(entry.weightKg);
+        const pullups = Math.max(0, Math.round(toNumber(entry.pullups)));
+        const weight = toNullableWeight(entry.weightKg);
 
         if (!grouped.has(week)) {
             grouped.set(week, {
@@ -197,7 +256,7 @@ function calculateWeeklyData(data) {
         item.totalPullups += pullups;
         item.days += 1;
 
-        if (weight !== null && !Number.isNaN(weight)) {
+        if (weight !== null) {
             item.weightSum += weight;
             item.weightCount += 1;
         }
@@ -214,7 +273,7 @@ function calculateWeeklyData(data) {
 
 function updateStats() {
     const totalEntries = entries.length;
-    const totalPullups = entries.reduce((sum, entry) => sum + toNumber(entry.pullups), 0);
+    const totalPullups = entries.reduce((sum, entry) => sum + Math.max(0, Math.round(toNumber(entry.pullups))), 0);
     const avgDay = totalEntries ? totalPullups / totalEntries : 0;
 
     const weekly = calculateWeeklyData(entries);
@@ -241,7 +300,7 @@ function renderTable() {
     els.entriesTableBody.innerHTML = entries.map(entry => `
         <tr>
             <td>${entry.date}</td>
-            <td>${entry.pullups}</td>
+            <td>${Math.max(0, Math.round(toNumber(entry.pullups)))}</td>
             <td>${formatWeight(entry.weightKg)}</td>
             <td>
                 <div class="action-buttons">
@@ -255,17 +314,18 @@ function renderTable() {
 
 function prepareCanvas(canvas) {
     const rect = canvas.getBoundingClientRect();
+    const width = Math.max(300, Math.floor(rect.width || 300));
+    const height = Math.max(220, Math.floor(rect.height || 220));
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.max(300, Math.floor(rect.width * dpr));
-    canvas.height = Math.max(220, Math.floor(rect.height * dpr));
+
+    canvas.width = Math.floor(width * dpr);
+    canvas.height = Math.floor(height * dpr);
+
     const ctx = canvas.getContext("2d");
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.scale(dpr, dpr);
-    return {
-        ctx,
-        width: rect.width,
-        height: rect.height
-    };
+
+    return { ctx, width, height };
 }
 
 function drawEmptyChart(canvas, title) {
@@ -287,9 +347,13 @@ function drawMixedChart(canvas, labels, barData, lineData, config) {
     const { ctx, width, height } = prepareCanvas(canvas);
     ctx.clearRect(0, 0, width, height);
 
-    const padding = { top: 36, right: 54, bottom: 54, left: 54 };
-    const chartWidth = width - padding.left - padding.right;
-    const chartHeight = height - padding.top - padding.bottom;
+    const padding = { top: 36, right: 56, bottom: 56, left: 56 };
+    const chartWidth = Math.max(40, width - padding.left - padding.right);
+    const chartHeight = Math.max(40, height - padding.top - padding.bottom);
+
+    const maxBar = Math.max(1, ...barData.map(v => Math.max(0, Number(v) || 0)));
+    const filteredLine = lineData.filter(v => v !== null && v !== undefined && Number.isFinite(v));
+    const maxLine = Math.max(1, ...(filteredLine.length ? filteredLine : [1]));
 
     ctx.fillStyle = "#94a3b8";
     ctx.font = "14px Arial";
@@ -314,18 +378,14 @@ function drawMixedChart(canvas, labels, barData, lineData, config) {
     ctx.lineTo(width - padding.right, height - padding.bottom);
     ctx.stroke();
 
-    const maxBar = Math.max(...barData, 1);
-    const filteredLine = lineData.filter(v => v !== null && v !== undefined && !Number.isNaN(v));
-    const maxLine = Math.max(...filteredLine, 1);
-
-    const stepX = labels.length > 1 ? chartWidth / labels.length : chartWidth;
-    const barWidth = Math.min(40, stepX * 0.5);
+    const stepX = chartWidth / labels.length;
+    const barWidth = Math.min(40, Math.max(10, stepX * 0.55));
 
     ctx.font = "12px Arial";
 
     labels.forEach((label, index) => {
         const xCenter = padding.left + stepX * index + stepX / 2;
-        const barValue = Number(barData[index]) || 0;
+        const barValue = Math.max(0, Number(barData[index]) || 0);
         const barHeight = (barValue / maxBar) * chartHeight;
         const barX = xCenter - barWidth / 2;
         const barY = height - padding.bottom - barHeight;
@@ -347,7 +407,8 @@ function drawMixedChart(canvas, labels, barData, lineData, config) {
 
     labels.forEach((label, index) => {
         const value = lineData[index];
-        if (value === null || value === undefined || Number.isNaN(value)) {
+
+        if (value === null || value === undefined || !Number.isFinite(value)) {
             started = false;
             return;
         }
@@ -367,7 +428,8 @@ function drawMixedChart(canvas, labels, barData, lineData, config) {
 
     labels.forEach((label, index) => {
         const value = lineData[index];
-        if (value === null || value === undefined || Number.isNaN(value)) {
+
+        if (value === null || value === undefined || !Number.isFinite(value)) {
             return;
         }
 
@@ -389,6 +451,7 @@ function drawMixedChart(canvas, labels, barData, lineData, config) {
 
     ctx.fillStyle = config.barColor;
     ctx.fillRect(padding.left, height - 18, 14, 10);
+
     ctx.fillStyle = "#cbd5e1";
     ctx.textAlign = "left";
     ctx.fillText(config.barLegend, padding.left + 20, height - 9);
@@ -419,8 +482,8 @@ function drawMixedChart(canvas, labels, barData, lineData, config) {
 
 function renderCharts() {
     const dailyLabels = entries.map(entry => entry.date);
-    const dailyPullups = entries.map(entry => toNumber(entry.pullups));
-    const dailyWeights = entries.map(entry => entry.weightKg === null || entry.weightKg === "" ? null : Number(entry.weightKg));
+    const dailyPullups = entries.map(entry => Math.max(0, Math.round(toNumber(entry.pullups))));
+    const dailyWeights = entries.map(entry => toNullableWeight(entry.weightKg));
 
     drawMixedChart(els.dailyChart, dailyLabels, dailyPullups, dailyWeights, {
         title: "Tägliche Klimmzüge und Gewicht",
@@ -449,7 +512,11 @@ function renderCharts() {
 }
 
 function renderAll() {
-    entries.sort((a, b) => a.date.localeCompare(b.date));
+    entries = entries
+        .map(entry => sanitizeEntry(entry, entry?.id || null))
+        .filter(Boolean)
+        .sort((a, b) => a.date.localeCompare(b.date));
+
     renderTable();
     updateStats();
     renderCharts();
@@ -465,7 +532,10 @@ function resetForm() {
 }
 
 async function reloadEntries() {
-    entries = await getAllEntries();
+    const rawEntries = await getAllEntries();
+    entries = rawEntries
+        .map(item => sanitizeEntry(item, item?.id || null))
+        .filter(Boolean);
     renderAll();
 }
 
@@ -473,28 +543,44 @@ async function handleFormSubmit(event) {
     event.preventDefault();
 
     try {
-        const date = els.entryDate.value;
-        const pullups = toNumber(els.pullups.value);
-        const weightKg = els.weightKg.value === "" ? null : Number(els.weightKg.value);
+        if (!els.form.checkValidity()) {
+            els.form.reportValidity();
+            return;
+        }
+
+        const date = els.entryDate.value.trim();
+        const pullupsRaw = els.pullups.value;
+        const weightRaw = els.weightKg.value;
 
         if (!date) {
             throw new Error("Bitte ein Datum auswählen.");
         }
 
-        const existing = await getEntryByDate(date);
-
-        let entryId = editingId;
-        if (existing && !editingId) {
-            entryId = existing.id;
+        const pullupsNumber = Number(pullupsRaw);
+        if (!Number.isFinite(pullupsNumber) || pullupsNumber < 0) {
+            throw new Error("Klimmzüge müssen 0 oder größer sein.");
         }
 
-        const entry = {
-            id: entryId || crypto.randomUUID(),
+        if (weightRaw !== "") {
+            const weightNumber = Number(weightRaw);
+            if (!Number.isFinite(weightNumber) || weightNumber < 0) {
+                throw new Error("Gewicht muss leer oder 0 oder größer sein.");
+            }
+        }
+
+        const existing = await getEntryByDate(date);
+        const preferredId = editingId || existing?.id || null;
+
+        const entry = sanitizeEntry({
             date,
-            pullups,
-            weightKg,
+            pullups: pullupsNumber,
+            weightKg: weightRaw === "" ? null : Number(weightRaw),
             updatedAt: new Date().toISOString()
-        };
+        }, preferredId);
+
+        if (!entry) {
+            throw new Error("Bitte gültige Werte eingeben.");
+        }
 
         await saveEntryToDb(entry);
         await reloadEntries();
@@ -513,7 +599,7 @@ window.editEntry = function (id) {
 
     editingId = entry.id;
     els.entryDate.value = entry.date;
-    els.pullups.value = entry.pullups;
+    els.pullups.value = Math.max(0, Math.round(toNumber(entry.pullups)));
     els.weightKg.value = entry.weightKg ?? "";
     setStatus(`Bearbeite Eintrag vom ${entry.date}`);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -527,9 +613,11 @@ window.removeEntry = async function (id) {
 
     try {
         await deleteEntryFromDb(id);
+
         if (editingId === id) {
             editingId = null;
         }
+
         await reloadEntries();
         setStatus("Eintrag gelöscht.");
     } catch (error) {
@@ -549,13 +637,23 @@ function downloadJson(filename, content) {
     URL.revokeObjectURL(url);
 }
 
+function buildExportEntries() {
+    return entries.map(entry => ({
+        id: entry.id,
+        date: entry.date,
+        pullups: Math.max(0, Math.round(toNumber(entry.pullups))),
+        weightKg: toNullableWeight(entry.weightKg),
+        updatedAt: entry.updatedAt || new Date().toISOString()
+    }));
+}
+
 function exportBackup() {
     try {
         const backup = {
             app: "KlimmzuegeTracker",
-            version: 1,
+            version: 2,
             exportedAt: new Date().toISOString(),
-            entries
+            entries: buildExportEntries()
         };
 
         const json = JSON.stringify(backup, null, 2);
@@ -580,25 +678,38 @@ async function importBackupFile(file) {
             throw new Error("Ungültige Sicherungsdatei.");
         }
 
-        for (const item of backup.entries) {
-            const normalized = {
-                id: item.id || crypto.randomUUID(),
-                date: item.date,
-                pullups: toNumber(item.pullups),
-                weightKg: item.weightKg === null || item.weightKg === "" ? null : Number(item.weightKg),
-                updatedAt: item.updatedAt || new Date().toISOString()
-            };
+        let importedCount = 0;
+        let updatedCount = 0;
+        let skippedCount = 0;
 
-            if (!normalized.date) {
+        for (const item of backup.entries) {
+            const rawDate = typeof item?.date === "string" ? item.date.trim() : "";
+
+            if (!rawDate) {
+                skippedCount++;
+                continue;
+            }
+
+            const existing = await getEntryByDate(rawDate);
+            const normalized = sanitizeEntry(item, existing?.id || null);
+
+            if (!normalized) {
+                skippedCount++;
                 continue;
             }
 
             await saveEntryToDb(normalized);
+
+            if (existing) {
+                updatedCount++;
+            } else {
+                importedCount++;
+            }
         }
 
         await reloadEntries();
         resetForm();
-        setStatus("Backup importiert.");
+        setStatus(`Backup importiert. Neu: ${importedCount}, aktualisiert: ${updatedCount}, übersprungen: ${skippedCount}`);
     } catch (error) {
         setStatus(error.message || "Backup konnte nicht importiert werden.", true);
     } finally {
@@ -607,7 +718,10 @@ async function importBackupFile(file) {
 }
 
 window.addEventListener("resize", () => {
-    renderCharts();
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+        renderCharts();
+    }, 120);
 });
 
 async function init() {
@@ -617,7 +731,7 @@ async function init() {
         await reloadEntries();
         resetForm();
     } catch (error) {
-        setStatus("Initialisierung fehlgeschlagen.", true);
+        setStatus(error.message || "Initialisierung fehlgeschlagen.", true);
     }
 }
 
