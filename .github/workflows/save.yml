@@ -1,0 +1,67 @@
+name: Calculate Actions Storage
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  calculate-storage:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Calculate Actions storage usage
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let totalArtifacts = 0;
+            let totalCaches = 0;
+
+            // --- Artefakte summieren ---
+            let page = 1;
+            while (true) {
+              const { data } = await github.rest.actions.listArtifactsForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                per_page: 100,
+                page
+              });
+
+              if (data.artifacts.length === 0) break;
+
+              for (const artifact of data.artifacts) {
+                totalArtifacts += artifact.size_in_bytes;
+              }
+
+              page++;
+            }
+
+            // --- Caches summieren ---
+            page = 1;
+            while (true) {
+              const { data } = await github.rest.actions.getActionsCacheList({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                per_page: 100,
+                page
+              });
+
+              if (!data.actions_caches || data.actions_caches.length === 0) break;
+
+              for (const cache of data.actions_caches) {
+                totalCaches += cache.size_in_bytes;
+              }
+
+              page++;
+            }
+
+            const toMB = bytes => (bytes / 1024 / 1024).toFixed(2);
+            const toGB = bytes => (bytes / 1024 / 1024 / 1024).toFixed(2);
+
+            console.log("=== GitHub Actions Speicherverbrauch ===");
+            console.log(`Artefakte: ${toMB(totalArtifacts)} MB (${toGB(totalArtifacts)} GB)`);
+            console.log(`Caches:    ${toMB(totalCaches)} MB (${toGB(totalCaches)} GB)`);
+            console.log("----------------------------------------");
+            console.log(`GESAMT:    ${toMB(totalArtifacts + totalCaches)} MB (${toGB(totalArtifacts + totalCaches)} GB)`);

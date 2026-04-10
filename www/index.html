@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TGU Shop App</title>
+
+    <script>
+      document.addEventListener("DOMContentLoaded", async () => {
+        const Browser = window.Capacitor?.Plugins?.Browser;
+
+        if (!Browser) {
+          document.body.innerHTML = "<p>Browser Plugin fehlt.</p>";
+          return;
+        }
+
+        // Wenn der Nutzer das X drückt → sofort wieder öffnen
+        Browser.addListener("browserFinished", async () => {
+          await Browser.open({
+            url: "https://www.tgu-shop.com",
+            presentationStyle: "fullscreen"
+          });
+        });
+
+        // Beim Start öffnen
+        await Browser.open({
+          url: "https://www.tgu-shop.com",
+          presentationStyle: "fullscreen"
+        });
+      });
+    </script>
+  </head>
+  <body></body>
+</html>

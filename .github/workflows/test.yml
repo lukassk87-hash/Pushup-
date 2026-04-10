@@ -1,0 +1,56 @@
+name: Delete workflow runs older than 2 days
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cleanup-runs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Delete workflow runs older than 2 days
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const days = 2;
+            const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+
+            let page = 1;
+            let deleted = 0;
+            let seen = 0;
+
+            while (true) {
+              const { data } = await github.rest.actions.listWorkflowRunsForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                per_page: 100,
+                page
+              });
+
+              if (data.workflow_runs.length === 0) break;
+
+              for (const run of data.workflow_runs) {
+                seen++;
+                const created = new Date(run.created_at).getTime();
+
+                if (created < cutoff) {
+                  console.log(`→ Lösche Build: ${run.name} (#${run.run_number})`);
+                  await github.rest.actions.deleteWorkflowRun({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    run_id: run.id
+                  });
+                  deleted++;
+                } else {
+                  console.log(`Behalte: ${run.name} (#${run.run_number})`);
+                }
+              }
+
+              page++;
+            }
+
+            console.log(`Fertig. Gesehene Builds: ${seen}, gelöscht: ${deleted}`);
