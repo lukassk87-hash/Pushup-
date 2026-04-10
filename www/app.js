@@ -47,6 +47,7 @@ function toNullableWeight(value) {
     if (value === "" || value === null || value === undefined) {
         return null;
     }
+
     const n = Number(value);
     return Number.isFinite(n) ? n : null;
 }
@@ -55,6 +56,7 @@ function formatWeight(weight) {
     if (weight === null || weight === undefined || weight === "") {
         return "-";
     }
+
     const n = Number(weight);
     return Number.isFinite(n) ? `${n.toFixed(1)} kg` : "-";
 }
@@ -93,6 +95,24 @@ function sanitizeEntry(raw, preferredId = null) {
         pullups: Math.round(parsedPullups),
         weightKg,
         updatedAt: raw.updatedAt || new Date().toISOString()
+    };
+}
+
+function buildStoredEntry(raw, existing = null, mode = "replace") {
+    const normalized = sanitizeEntry(raw, existing?.id || null);
+    if (!normalized) {
+        return null;
+    }
+
+    const existingPullups = existing ? Math.max(0, Math.round(toNumber(existing.pullups))) : 0;
+    const newPullups = Math.max(0, Math.round(toNumber(normalized.pullups)));
+
+    return {
+        id: existing?.id || normalized.id,
+        date: normalized.date,
+        pullups: mode === "accumulate" ? existingPullups + newPullups : newPullups,
+        weightKg: normalized.weightKg,
+        updatedAt: new Date().toISOString()
     };
 }
 
@@ -569,23 +589,22 @@ async function handleFormSubmit(event) {
         }
 
         const existing = await getEntryByDate(date);
-        const preferredId = editingId || existing?.id || null;
 
-        const entry = sanitizeEntry({
+        const mergedEntry = buildStoredEntry({
             date,
             pullups: pullupsNumber,
             weightKg: weightRaw === "" ? null : Number(weightRaw),
             updatedAt: new Date().toISOString()
-        }, preferredId);
+        }, existing, "accumulate");
 
-        if (!entry) {
+        if (!mergedEntry) {
             throw new Error("Bitte gültige Werte eingeben.");
         }
 
-        await saveEntryToDb(entry);
+        await saveEntryToDb(mergedEntry);
         await reloadEntries();
         resetForm();
-        setStatus("Eintrag gespeichert.");
+        setStatus(existing ? "Tageswert aktualisiert und Klimmzüge addiert." : "Eintrag gespeichert.");
     } catch (error) {
         setStatus(error.message || "Fehler beim Speichern.", true);
     }
@@ -599,9 +618,9 @@ window.editEntry = function (id) {
 
     editingId = entry.id;
     els.entryDate.value = entry.date;
-    els.pullups.value = Math.max(0, Math.round(toNumber(entry.pullups)));
+    els.pullups.value = 0;
     els.weightKg.value = entry.weightKg ?? "";
-    setStatus(`Bearbeite Eintrag vom ${entry.date}`);
+    setStatus(`Bearbeite ${entry.date}. Neue Klimmzüge werden zum Tag addiert, Gewicht wird überschrieben.`);
     window.scrollTo({ top: 0, behavior: "smooth" });
 };
 
@@ -619,6 +638,7 @@ window.removeEntry = async function (id) {
         }
 
         await reloadEntries();
+        resetForm();
         setStatus("Eintrag gelöscht.");
     } catch (error) {
         setStatus(error.message || "Fehler beim Löschen.", true);
@@ -626,7 +646,7 @@ window.removeEntry = async function (id) {
 };
 
 function downloadJson(filename, content) {
-    const blob = new Blob([content], { type: "application/json" });
+    const blob = new Blob([content], { type: "application/json;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -649,22 +669,25 @@ function buildExportEntries() {
 
 function exportBackup() {
     try {
+        const exportEntries = buildExportEntries();
+
         const backup = {
             app: "KlimmzuegeTracker",
             version: 2,
             exportedAt: new Date().toISOString(),
-            entries: buildExportEntries()
+            entries: exportEntries
         };
 
         const json = JSON.stringify(backup, null, 2);
         const date = getTodayString();
-        downloadJson(`klimmzuege-backup-${date}.json`, json);
-        setStatus("Backup exportiert.");
+        const filename = `klimmzuege-backup-${date}.json`;
+
+        downloadJson(filename, json);
+        setStatus(`Backup exportiert: ${filename} (${exportEntries.length} Einträge).`);
     } catch (error) {
         setStatus("Backup konnte nicht exportiert werden.", true);
     }
 }
-
 async function importBackupFile(file) {
     if (!file) {
         return;
@@ -672,9 +695,19 @@ async function importBackupFile(file) {
 
     try {
         const text = await file.text();
-        const backup = JSON.parse(text);
 
-        if (!backup || !Array.isArray(backup.entries)) {
+        if (!text || !text.trim()) {
+            throw new Error("Die Sicherungsdatei ist leer.");
+        }
+
+        let backup;
+        try {
+            backup = JSON.parse(text);
+        } catch {
+            throw new Error("Die Sicherungsdatei ist kein gültiges JSON.");
+        }
+
+        if (!backup || typeof backup !== "object" || !Array.isArray(backup.entries)) {
             throw new Error("Ungültige Sicherungsdatei.");
         }
 
@@ -683,15 +716,20 @@ async function importBackupFile(file) {
         let skippedCount = 0;
 
         for (const item of backup.entries) {
-            const rawDate = typeof item?.date === "string" ? item.date.trim() : "";
+            const date = typeof item?.date === "string" ? item.date.trim() : "";
 
-            if (!rawDate) {
+            if (!date) {
                 skippedCount++;
                 continue;
             }
 
-            const existing = await getEntryByDate(rawDate);
-            const normalized = sanitizeEntry(item, existing?.id || null);
+            const existing = await getEntryByDate(date);
+            const normalized = buildStoredEntry({
+                date,
+                pullups: item.pullups,
+                weightKg: item.weightKg,
+                updatedAt: item.updatedAt || new Date().toISOString()
+            }, existing, "replace");
 
             if (!normalized) {
                 skippedCount++;
@@ -709,7 +747,7 @@ async function importBackupFile(file) {
 
         await reloadEntries();
         resetForm();
-        setStatus(`Backup importiert. Neu: ${importedCount}, aktualisiert: ${updatedCount}, übersprungen: ${skippedCount}`);
+        setStatus(`Backup importiert. Neu: ${importedCount}, ersetzt: ${updatedCount}, übersprungen: ${skippedCount}`);
     } catch (error) {
         setStatus(error.message || "Backup konnte nicht importiert werden.", true);
     } finally {
