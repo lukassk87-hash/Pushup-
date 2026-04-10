@@ -1,6 +1,6 @@
 {
-  "appId": "com.tgu.shopapp",
-  "appName": "TGU Shop",
+  "appId": "com.pushup.shopapp",
+  "appName": "Klimmzugmaschine",
   "webDir": "www",
   "bundledWebRuntime": false
 }
