@@ -107,11 +107,16 @@ function buildStoredEntry(raw, existing = null, mode = "replace") {
     const existingPullups = existing ? Math.max(0, Math.round(toNumber(existing.pullups))) : 0;
     const newPullups = Math.max(0, Math.round(toNumber(normalized.pullups)));
 
+    const keepExistingWeight =
+        mode === "accumulate" &&
+        existing &&
+        (normalized.weightKg === null || normalized.weightKg === undefined);
+
     return {
         id: existing?.id || normalized.id,
         date: normalized.date,
         pullups: mode === "accumulate" ? existingPullups + newPullups : newPullups,
-        weightKg: normalized.weightKg,
+        weightKg: keepExistingWeight ? toNullableWeight(existing.weightKg) : normalized.weightKg,
         updatedAt: new Date().toISOString()
     };
 }
@@ -604,7 +609,16 @@ async function handleFormSubmit(event) {
         await saveEntryToDb(mergedEntry);
         await reloadEntries();
         resetForm();
-        setStatus(existing ? "Tageswert aktualisiert und Klimmzüge addiert." : "Eintrag gespeichert.");
+
+        if (existing) {
+            setStatus(
+                weightRaw === ""
+                    ? "Tageswert aktualisiert: Klimmzüge addiert, Gewicht beibehalten."
+                    : "Tageswert aktualisiert: Klimmzüge addiert, Gewicht überschrieben."
+            );
+        } else {
+            setStatus("Eintrag gespeichert.");
+        }
     } catch (error) {
         setStatus(error.message || "Fehler beim Speichern.", true);
     }
@@ -620,7 +634,7 @@ window.editEntry = function (id) {
     els.entryDate.value = entry.date;
     els.pullups.value = 0;
     els.weightKg.value = entry.weightKg ?? "";
-    setStatus(`Bearbeite ${entry.date}. Neue Klimmzüge werden zum Tag addiert, Gewicht wird überschrieben.`);
+    setStatus(`Bearbeite ${entry.date}. Neue Klimmzüge werden zum Tag addiert, Gewicht wird nur überschrieben, wenn du es neu eingibst.`);
     window.scrollTo({ top: 0, behavior: "smooth" });
 };
 
@@ -688,6 +702,7 @@ function exportBackup() {
         setStatus("Backup konnte nicht exportiert werden.", true);
     }
 }
+
 async function importBackupFile(file) {
     if (!file) {
         return;
