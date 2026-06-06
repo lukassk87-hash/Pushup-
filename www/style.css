@@ -22,13 +22,13 @@
 
 body {
     margin: 0;
-    font-family: Arial, Helvetica, sans-serif;
+    font-family: 'Segoe UI', Roboto, Arial, sans-serif;
     background: linear-gradient(180deg, #0b1020, #111827);
     color: var(--text);
 }
 
 .app {
-    width: min(1200px, calc(100% - 24px));
+    width: min(1400px, calc(100% - 24px));
     margin: 0 auto;
     padding: 20px 0 30px;
 }
@@ -42,14 +42,9 @@ body {
     flex-wrap: wrap;
 }
 
-h1,
-h2 {
+h1, h2 {
     margin: 0 0 10px;
-}
-
-.subtitle {
-    margin: 0;
-    color: var(--muted);
+    font-weight: 600;
 }
 
 .storage-box {
@@ -61,6 +56,27 @@ h2 {
     font-size: 14px;
 }
 
+.filter-card {
+    margin-bottom: 20px;
+}
+
+.filter-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: flex-end;
+}
+
+.filter-row .field {
+    margin-bottom: 0;
+    min-width: 140px;
+}
+
+.filter-buttons {
+    display: flex;
+    gap: 10px;
+}
+
 .layout {
     display: grid;
     gap: 20px;
@@ -68,7 +84,7 @@ h2 {
     margin-bottom: 20px;
 }
 
-@media (min-width: 980px) {
+@media (min-width: 1000px) {
     .layout {
         grid-template-columns: 420px 1fr;
         align-items: start;
@@ -92,6 +108,7 @@ h2 {
 label {
     color: #dbeafe;
     font-size: 14px;
+    font-weight: 500;
 }
 
 input[type="date"],
@@ -128,10 +145,10 @@ input:focus {
     cursor: pointer;
     font-size: 15px;
     transition: 0.2s ease;
-    text-decoration: none;
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    gap: 6px;
 }
 
 .btn:hover {
@@ -205,6 +222,7 @@ input:focus {
 
 .chart-wrap {
     height: 320px;
+    width: 100%;
 }
 
 .chart-wrap canvas {
@@ -221,24 +239,24 @@ input:focus {
 }
 
 .table-wrap {
-    overflow: auto;
+    overflow-x: auto;
     border: 1px solid var(--border);
     border-radius: 14px;
 }
 
 table {
     width: 100%;
-    min-width: 640px;
+    min-width: 700px;
     border-collapse: collapse;
     background: var(--panel-2);
 }
 
-th,
-td {
-    padding: 12px 10px;
+th, td {
+    padding: 12px 8px;
     border-bottom: 1px solid var(--border);
     text-align: left;
     font-size: 14px;
+    white-space: nowrap;
 }
 
 th {
@@ -246,16 +264,18 @@ th {
     background: #111827;
 }
 
+td:first-child, th:first-child { padding-left: 12px; }
+td:last-child, th:last-child { padding-right: 12px; }
+
 .action-buttons {
     display: flex;
     gap: 8px;
-    flex-wrap: wrap;
 }
 
 .small-btn {
-    padding: 8px 10px;
-    border-radius: 10px;
-    font-size: 13px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 12px;
 }
 
 .small-btn.delete {
